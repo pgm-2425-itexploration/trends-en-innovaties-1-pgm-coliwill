@@ -1,52 +1,61 @@
-const { app, BrowserWindow } = require('electron');
-const path = require('node:path');
-const started = require('electron-squirrel-startup');
+const { app, BrowserWindow, ipcMain, desktopCapturer, Menu } = require('electron');
+const path = require('path');
 
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
-if (started) {
-  app.quit();
-}
-
+// Function to create the main application window
 const createWindow = () => {
-  // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 800, // Set the width of the window to 800 pixels
+    height: 600, // Set the height of the window to 600 pixels
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.js'), // Specify the path to the preload script
+      contextIsolation: true, // Isolate context to improve security
+      enableRemoteModule: false, // Disable remote module for security reasons
+      nodeIntegration: false, // Prevent node.js integration in the renderer process
     },
   });
 
-  // and load the index.html of the app.
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, 'index.html')); // Load the HTML file into the window
 
-  // Open the DevTools.
-  mainWindow.webContents.openDevTools();
+  mainWindow.webContents.openDevTools(); // Open developer tools for debugging
 };
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
-  createWindow();
-
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
-});
-
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
+// Handle the 'get-sources' IPC call from the renderer process
+ipcMain.handle('get-sources', async (event) => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] }); // Get available screen and window sources
+    return sources; // Return the sources to the renderer process
+  } catch (error) {
+    console.error('Error fetching sources:', error); // Log any errors that occur
+    throw error; // Re-throw the error to propagate it to the renderer process
   }
 });
 
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.
+// Handle the 'show-context-menu' IPC call from the renderer process
+ipcMain.handle('show-context-menu', (event, menuItems) => {
+  const menu = Menu.buildFromTemplate(
+    menuItems.map((item) => ({
+      label: item.label, // Label for the context menu item
+      click: () => {
+        event.sender.send('context-menu-selection', item.id); // Send back the selection to the renderer process
+      },
+    }))
+  );
+  menu.popup(BrowserWindow.fromWebContents(event.sender)); // Show the context menu at the cursor position
+});
+
+// When the Electron application is ready, create the main window
+app.whenReady().then(createWindow);
+
+// Quit the application when all windows are closed, unless on macOS
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') { // macOS typically keeps apps running even when windows are closed
+    app.quit(); // Quit the app if not on macOS
+  }
+});
+
+// Recreate the window if the app is activated (for macOS behavior)
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) { // If no windows are open, recreate one
+    createWindow(); // Create a new main window
+  }
+});
